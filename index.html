@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>법인카드 집근처 사용 분석</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>법인카드 집근처 사용 분석</h1>
+  <nav id="tabs">
+    <button data-tab="settings" class="active">① 설정</button>
+    <button data-tab="data">② 카드내역</button>
+    <button data-tab="homes">③ 직원 집주소</button>
+    <button data-tab="result">④ 분석결과</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 설정 -->
+  <section id="tab-settings" class="tab active">
+    <div class="card">
+      <h2>카카오 지도 설정</h2>
+      <label>JavaScript 키
+        <input id="kakaoKey" type="password" placeholder="카카오 개발자 콘솔 > 앱 > 플랫폼 키 > JavaScript 키">
+      </label>
+      <p class="hint">
+        1) <a href="https://developers.kakao.com" target="_blank" rel="noopener">developers.kakao.com</a>에서 앱 생성 → JavaScript 키 복사<br>
+        2) JavaScript SDK 도메인에 이 페이지 주소(예: <code>http://localhost:5500</code>) 등록<br>
+        3) 카카오맵 사용 설정 ON. <code>file://</code>로 열면 동작하지 않으니 <code>start.bat</code>으로 실행하세요.
+      </p>
+    </div>
+    <div class="card">
+      <h2>분석 기준</h2>
+      <div class="grid">
+        <label>집근처 반경 (m)<input id="radius" type="number" min="100" step="100" value="1000"></label>
+        <label>심야 시작 (시)<input id="nightStart" type="number" min="0" max="23" value="22"></label>
+        <label>심야 종료 (시)<input id="nightEnd" type="number" min="0" max="23" value="6"></label>
+      </div>
+      <label>주의 업종·가맹점 키워드 (쉼표 구분)
+        <input id="keywords" value="유흥,주점,단란,노래,골프,스크린,마사지,백화점,면세,상품권,PC방,헬스,피부,미용,호프,포차">
+      </label>
+      <label class="check"><input id="holidayOn" type="checkbox" checked> 주말·고정 공휴일 사용을 의심 요소로 포함</label>
+      <p class="hint">위험점수: 집근처 40 + 휴일 20 + 심야 15 + 주의업종 25 (60점 이상 높음, 40점 이상 주의)</p>
+      <button id="saveSettings" class="primary">설정 저장</button>
+      <span id="settingsMsg" class="msg"></span>
+    </div>
+    <div class="card">
+      <h2>경영진 보고서 (Gemini)</h2>
+      <div class="grid2">
+        <label>Gemini API Key
+          <input id="geminiKey" type="password" placeholder="Google AI Studio에서 발급한 API Key" autocomplete="off">
+        </label>
+        <label>모델
+          <input id="geminiModel" value="gemini-2.5-flash">
+        </label>
+      </div>
+      <label>보고서 작성기준 (AI에게 전달되는 지침)
+        <textarea id="reportCriteria" rows="12"></textarea>
+      </label>
+      <label class="check"><input id="maskNames" type="checkbox" checked> 이용자명을 익명(이용자A, B…)으로 바꿔 전송</label>
+      <p class="hint">전송 내용: 집계 지표와 이상징후 상위 거래(가맹점명·일자·금액·사유·거리). 카드번호와 집주소는 전송하지 않습니다. API Key는 이 브라우저에만 저장됩니다.
+        <button id="resetCriteria" type="button">기본 기준으로 되돌리기</button></p>
+    </div>
+    <div class="card">
+      <h2>개인정보 안내</h2>
+      <p class="hint">카드내역·집주소는 이 브라우저 안에서만 처리됩니다(서버 전송 없음). 주소 검색 시에만 주소 문자열이 카카오 API로 전달됩니다. 집주소와 지오코딩 캐시는 브라우저 localStorage에 저장되므로 공용 PC에서는 사용 후 아래 버튼으로 삭제하세요.</p>
+      <button id="clearAll" class="danger">저장된 집주소·캐시 모두 삭제</button>
+    </div>
+  </section>
+
+  <!-- 카드내역 -->
+  <section id="tab-data" class="tab">
+    <div class="card">
+      <h2>법인카드 내역 업로드</h2>
+      <div id="drop" class="drop">엑셀(.xlsx/.xls) 또는 CSV 파일을 끌어놓거나 클릭해서 선택
+        <input id="file" type="file" accept=".xlsx,.xls,.csv" hidden>
+      </div>
+      <p class="hint">필수 컬럼: 이용자명, 이용일, 가맹점명, 이용금액, 가맹점 주소. 그 외 컬럼(순번, 카드번호, 승인시간, 가맹점업종명, 유종 등)은 있으면 활용합니다.
+        <a href="#" id="sampleLink">샘플 데이터로 체험하기</a></p>
+      <div id="dataInfo"></div>
+    </div>
+    <div class="card" id="previewCard" hidden>
+      <h2>미리보기 <small>(상위 50건)</small></h2>
+      <div class="tablewrap"><table id="previewTable"></table></div>
+    </div>
+  </section>
+
+  <!-- 집주소 -->
+  <section id="tab-homes" class="tab">
+    <div class="card">
+      <h2>직원 집주소 등록</h2>
+      <div class="toolbar">
+        <button id="loadUsers">카드내역에서 이용자 불러오기</button>
+        <button id="homeUpload">CSV 업로드 (이용자명,집주소)</button>
+        <input id="homeFile" type="file" accept=".csv,.xlsx,.xls" hidden>
+        <button id="addHome">행 추가</button>
+        <button id="saveHomes" class="primary">저장</button>
+        <span id="homesMsg" class="msg"></span>
+      </div>
+      <div class="tablewrap"><table id="homeTable">
+        <thead><tr><th style="width:180px">이용자명</th><th>집주소 (도로명/지번)</th><th style="width:60px"></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- 결과 -->
+  <section id="tab-result" class="tab">
+    <div class="card">
+      <div class="toolbar">
+        <button id="run" class="primary">분석 실행</button>
+        <button id="exportBtn" disabled>결과 엑셀 저장</button>
+        <progress id="progress" value="0" max="1" hidden></progress>
+        <span id="runMsg" class="msg"></span>
+      </div>
+    </div>
+    <div id="resultBody" hidden>
+      <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <h2>경영진 보고서 <small>(이상징후 요약 · 작성기준은 ① 설정에서 수정)</small></h2>
+        <div class="toolbar">
+          <button id="genReport" class="primary">AI 보고서 생성</button>
+          <button id="copyReport" disabled>복사</button>
+          <button id="dlReport" disabled>.md 저장</button>
+          <span id="reportMsg" class="msg"></span>
+        </div>
+        <div id="reportOut" class="report" hidden></div>
+      </div>
+      <div class="split">
+        <div class="card">
+          <h2>이용자별 현황 <small>(행 클릭 → 지도 이동)</small></h2>
+          <div class="tablewrap short"><table id="userTable"></table></div>
+        </div>
+        <div class="card mapcard">
+          <div id="mapMsg" class="hint"></div>
+          <div id="map"></div>
+          <div class="legend"><i class="dot red"></i>집근처 <i class="dot blue"></i>기타 <i class="dot home"></i>집</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>거래 상세</h2>
+        <div class="toolbar">
+          <select id="fUser"><option value="">전체 이용자</option></select>
+          <select id="fLevel">
+            <option value="">전체 등급</option>
+            <option value="high">높음</option>
+            <option value="mid">주의 이상</option>
+          </select>
+          <label class="check"><input id="fNear" type="checkbox"> 집근처만</label>
+          <label class="check"><input id="fHoliday" type="checkbox"> 휴일 사용만</label>
+          <span id="fCount" class="msg"></span>
+        </div>
+        <div class="tablewrap tall"><table id="txTable"></table></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
